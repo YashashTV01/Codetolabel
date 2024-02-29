@@ -4,80 +4,72 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 import string
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 
-sid = SentimentIntensityAnalyzer()
-stop_words = set(stopwords.words('english'))
+# Initialize NLTK resources
 lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words('english'))
+analyzer = SentimentIntensityAnalyzer()
 
+# Function for text preprocessing
 def preprocess_text(text):
-    text = text.lower()
-    text = text.translate(str.maketrans('', '', string.punctuation))
-    tokens = word_tokenize(text)
-    tokens = [word for word in tokens if word not in stop_words]
-    tokens = [lemmatizer.lemmatize(word) for word in tokens]
+    tokens = word_tokenize(text.lower())
+    tokens = [lemmatizer.lemmatize(token) for token in tokens if token not in stop_words and token not in string.punctuation]
     return ' '.join(tokens)
 
-def sentiment_analyse(sentiment_text):
-    score = sid.polarity_scores(sentiment_text)
-    compound_score = score['compound']
-    sentiment_label = ""
-    sentiment_value = 0
-
-    if compound_score >= 0.8:
-        sentiment_label = "Very Positive"
-        sentiment_value = 7
-    elif 0.6 <= compound_score < 0.8:
-        sentiment_label = "Positive"
-        sentiment_value = 6
-    elif 0.4 <= compound_score < 0.6:
-        sentiment_label = "Slightly Positive"
-        sentiment_value = 5
-    elif 0.2 <= compound_score < 0.4:
-        sentiment_label = "Somewhat Positive"
-        sentiment_value = 4
-    elif compound_score <= -0.8:
-        sentiment_label = "Very Negative"
-        sentiment_value = 1
-    elif -0.8 < compound_score <= -0.6:
-        sentiment_label = "Negative"
-        sentiment_value = 2
-    elif -0.6 < compound_score <= -0.4:
-        sentiment_label = "Slightly Negative"
-        sentiment_value = 3
-    elif -0.4 < compound_score <= -0.2:
-        sentiment_label = "Somewhat Negative"
-        sentiment_value = 3
+# Function to perform sentiment analysis
+def perform_sentiment_analysis(text):
+    preprocessed_text = preprocess_text(text)
+    compound_score = analyzer.polarity_scores(preprocessed_text)['compound']
+    if compound_score >= 0.6:
+        return "VeryPositive", compound_score
+    elif 0.2 <= compound_score < 0.6:
+        return "Positive", compound_score
+    elif -0.2 <= compound_score < 0.2:
+        return "Neutral", compound_score
+    elif -0.6 <= compound_score < -0.2:
+        return "Negative", compound_score
     else:
-        sentiment_label = "Neutral"
-        sentiment_value = 4
+        return "VeryNegative", compound_score
 
-    return sentiment_label, sentiment_value
+# Load dataset
+def load_dataset(file_path):
+    try:
+        df = pd.read_csv(file_path)
+        return df
+    except FileNotFoundError:
+        print("File not found.")
+        return None
 
-def analyze_sentiments(df_chunk):
-    df_chunk['sentiment_label'], df_chunk['sentiment_value'] = zip(*df_chunk['sentence_str'].apply(sentiment_analyse))
-    return df_chunk
-
-def process_data_chunk(df_chunk):
-    df_chunk['sentence_str'] = df_chunk['sentence_str'].apply(preprocess_text)
-    df_chunk = analyze_sentiments(df_chunk)
-    return df_chunk
-
+# Main function
 def main():
-    file_path = 'philosophy_data.csv'
-    chunksize = 10000  # Adjust the chunk size based on your system's memory capacity
-    output_file_path = 'philosophy_data_labeled_dataset.csv'
-
-    df_chunks = pd.read_csv(file_path, chunksize=chunksize)
-    pool = Pool()  # Use multiprocessing Pool for parallel processing
-
-    processed_chunks = pool.map(process_data_chunk, df_chunks)
-    pool.close()
-    pool.join()
-
-    df_with_sentiments = pd.concat(processed_chunks)
-
-    df_with_sentiments.to_csv(output_file_path, index=False)
+    # Input dataset path
+    file_path = input("Enter the path to your dataset: ")
+    df = load_dataset(file_path)
+    if df is None:
+        return
+    
+    # Select column containing text data
+    text_column = input("Enter the name of the column containing text data: ")
+    
+    # Define the number of processes to use (adjust according to your CPU cores)
+    num_processes = cpu_count()  # Use all available CPU cores
+    
+    # Perform sentiment analysis in parallel
+    with Pool(processes=num_processes) as pool:
+        results = pool.map(perform_sentiment_analysis, df[text_column])
+    
+    # Extract sentiment labels and compound scores from the results
+    sentiment_labels, compound_scores = zip(*results)
+    
+    # Add sentiment labels and compound scores to the dataset
+    df['SentimentLabel'] = sentiment_labels
+    df['CompoundScore'] = compound_scores
+    
+    # Save the updated dataset
+    output_path = input("Enter the path to save the updated dataset: ")
+    df.to_csv(output_path, index=False)
+    print("Sentiment analysis completed and dataset updated successfully.")
 
 if __name__ == "__main__":
     main()
